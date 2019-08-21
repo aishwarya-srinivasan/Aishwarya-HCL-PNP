@@ -1,0 +1,92 @@
+def getOfficeURL(String branchName) {
+  //The default is dev build, the notifications are sent only to Build private channel inside the HCLTX Phoenix, deploy to AWS stage is skipped by default
+  officeWebhookUrl = 'https://outlook.office.com/webhook/1ed812fc-987d-424d-b3a6-9054884858ab@189de737-c93a-4f5a-8b68-6f4ca9941912/JenkinsCI/21140c5325274909b8f5d9b2cdec28ca/ecbf475e-55d5-4297-a64b-0bd96998074d'
+  //String gitBranch = sh(script: 'echo $GIT_BRANCH', returnStdout: true)
+  if (branchName == "origin/master") {
+    //If master then send posts to Build channel, also deploy to AWS
+    officeWebhookUrl = 'https://outlook.office.com/webhook/1ed812fc-987d-424d-b3a6-9054884858ab@189de737-c93a-4f5a-8b68-6f4ca9941912/JenkinsCI/21140c5325274909b8f5d9b2cdec28ca/ecbf475e-55d5-4297-a64b-0bd96998074d'
+  }
+  return officeWebhookUrl
+}
+
+def getBuildErrorsOfficeURL(String branchName) {
+  //The default is dev build errors, the notifications are sent only to Build private channel inside the HCLTX Phoenix, deploy to AWS stage is skipped by default
+  officeErrorWebhookUrl = 'https://outlook.office.com/webhook/1ed812fc-987d-424d-b3a6-9054884858ab@189de737-c93a-4f5a-8b68-6f4ca9941912/JenkinsCI/21140c5325274909b8f5d9b2cdec28ca/ecbf475e-55d5-4297-a64b-0bd96998074d'
+  //String gitBranch = sh(script: 'echo $GIT_BRANCH', returnStdout: true)
+  if (branchName == "origin/master") {
+    //If master build erros then send posts to Build channel, also deploy to AWS
+    officeErrorWebhookUrl = 'https://outlook.office.com/webhook/1ed812fc-987d-424d-b3a6-9054884858ab@189de737-c93a-4f5a-8b68-6f4ca9941912/JenkinsCI/21140c5325274909b8f5d9b2cdec28ca/ecbf475e-55d5-4297-a64b-0bd96998074d'
+  }
+  return officeErrorWebhookUrl
+}
+
+
+def String getGitCommits()
+{
+  String commits = sh(script: 'git log -1', returnStdout: true)
+  return commits
+}
+
+pipeline {
+  agent any
+  stages {
+  
+  stage('prepare')
+  {
+    steps{
+    	script {
+    		gitCommits = this.&getGitCommits()
+            OfficeURL = this.&getOfficeURL(env.GIT_BRANCH)
+    	}}
+ } 
+  stage('tx-client-jest')
+  {
+    steps {
+        script {
+          
+            build 'UICoE-hip-client'
+			
+	    	//sleep 20
+    }}
+}
+  //stage('tx-client-jest') {
+    //  steps {
+      //  script {
+
+        //  try {
+          //  bat '''
+           // d:
+		//	cd D:\\UI CoE\\ITX\\hip-client
+          //  npm test            
+          //  '''
+         // } catch (error) {
+           // office365ConnectorSend message: "tx-client build failed in jest test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)            
+           // office365ConnectorSend message: "tx-client build failed in jest test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+         // }
+       // }
+
+      //}
+    //}
+
+    stage('selenium-Automation') {
+      
+      steps {
+        script {
+			//sleep 120
+            build 'UICOE-TestAutomation'
+        }
+
+      }
+    }
+	
+	stage('Success') {
+      steps {
+        script { 
+            
+        }
+
+      }
+
+    }
+}
+}

@@ -1,0 +1,371 @@
+def getOfficeURL(String branchName) {
+  //The default is dev build, the notifications are sent only to Build private channel inside the HCLTX Phoenix, deploy to AWS stage is skipped by default
+  officeWebhookUrl = 'https://outlook.office.com/webhook/2c5a7fce-dd6c-4558-b48a-2cdfbe629f84@189de737-c93a-4f5a-8b68-6f4ca9941912/JenkinsCI/2d174bec1a8347cca97cabf5abe596ba/e1d3228c-a4bd-44ae-ab49-e1750aaac53b'
+  //String gitBranch = sh(script: 'echo $GIT_BRANCH', returnStdout: true)
+  if (branchName == "origin/master") {
+    //If master then send posts to Build channel, also deploy to AWS
+    officeWebhookUrl = 'https://outlook.office.com/webhook/2c5a7fce-dd6c-4558-b48a-2cdfbe629f84@189de737-c93a-4f5a-8b68-6f4ca9941912/JenkinsCI/cd84b1787f74408988675083142d6a24/e1d3228c-a4bd-44ae-ab49-e1750aaac53b'
+  }
+  return officeWebhookUrl
+}
+
+def getBuildErrorsOfficeURL(String branchName) {
+  //The default is dev build errors, the notifications are sent only to Build private channel inside the HCLTX Phoenix, deploy to AWS stage is skipped by default
+  officeErrorWebhookUrl = 'https://outlook.office.com/webhook/2c5a7fce-dd6c-4558-b48a-2cdfbe629f84@189de737-c93a-4f5a-8b68-6f4ca9941912/JenkinsCI/ce7815dfcf2440d8872be22e5eab694d/e1d3228c-a4bd-44ae-ab49-e1750aaac53b'
+  //String gitBranch = sh(script: 'echo $GIT_BRANCH', returnStdout: true)
+  if (branchName == "origin/master") {
+    //If master build erros then send posts to Build channel, also deploy to AWS
+    officeErrorWebhookUrl = 'https://outlook.office.com/webhook/2c5a7fce-dd6c-4558-b48a-2cdfbe629f84@189de737-c93a-4f5a-8b68-6f4ca9941912/JenkinsCI/44df464b4f734661ab3c83e149780dc4/e1d3228c-a4bd-44ae-ab49-e1750aaac53b'
+  }
+  return officeErrorWebhookUrl
+}
+
+def getServerToDeploy() {
+  return params.server_to_deploy
+}
+
+def getTestng() {
+  return params.testng
+}
+
+def String getGitCommits()
+{
+  //String commits = sh(script: 'git log -1', returnStdout: true)
+  //String commits = bat(returnStdout: true, script: 'git log -1')
+  String commits = bat(script: 'git log -1', returnStdout: true)
+  return commits
+}
+
+pipeline {
+  agent any
+
+  stages {
+
+    stage('Prepare') {
+      
+      steps {
+        script {
+          try {
+
+            bat 'set'
+            bat 'echo GIT_BRANCH %GIT_BRANCH%'
+            gitCommits = this.&getGitCommits()
+            OfficeURL = this.&getOfficeURL(env.GIT_BRANCH)
+            echo "echo Office URL = $OfficeURL"
+            bat '''
+            cd C:\\Users\\amitk\\.jenkins\\workspace\\Tx-Testing-Pipeline
+            '''
+            office365ConnectorSend message: "tx-client build started for git branch ${GIT_BRANCH}, git changes: \n" + gitCommits, status: "STARTED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)
+          } catch (error) {
+            office365ConnectorSend message: "tx-client build failed to start, @Build", status: "FAILED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)
+            office365ConnectorSend message: "tx-client build failed to start, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+            throw error
+          }
+        }
+      }
+    }
+
+    stage('updateFromMaster') {
+      when {
+        expression {
+          //Update from master only for branches that start with ITXP
+          return env.GIT_BRANCH.startsWith("origin/ITXP-impossible")
+        }
+      }
+      
+      steps {
+        script {
+          try {
+            bat '''
+              git rebase origin/master
+              if [ $? -ne 0 ]; then
+                exit $?
+              fi
+            '''
+          } catch (error) {
+            office365ConnectorSend message: "tx-client build failed to update ${GIT_BRANCH} from origin/master stage, @Build", status: "FAILED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)
+            office365ConnectorSend message: "tx-client build failed to update ${GIT_BRANCH} from origin/master stage, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+            throw error
+          }
+        }
+      }
+    }
+
+    stage('Compile') {
+      steps {
+        script {
+
+          try {
+            bat '''    
+            npm install
+             sleep  60
+           '''
+          } catch (error) {
+            office365ConnectorSend message: "tx-client build failed in Compile stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)
+            office365ConnectorSend message: "tx-client build failed in Compile stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+            throw error
+          }
+        }
+      }
+    }
+
+    stage('tx-client-jest') {
+      steps {
+        script {
+
+          try {
+            bat '''
+            npm test
+            if [ $? -ne 0 ]; then
+              exit $?
+            fi            
+            '''
+          } catch (error) {
+            office365ConnectorSend message: "tx-client build failed in jest test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)            
+            office365ConnectorSend message: "tx-client build failed in jest test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+            //sh 'sudo forever stopall'
+            throw error
+          }
+        }
+
+      }
+    }
+
+    stage('selenium') {
+      steps {
+        script {
+
+          try {
+
+            //Prepare selenium test env master vs dev
+            bat '''
+            cd tx-testing
+			del testng.xml
+			copy testng_regression_dev.xml testng.xml
+            '''
+            if (env.GIT_BRANCH.startsWith("origin/master")) {
+             println("Selenium master testing  using testng_regression_master.xml.")
+             bat 'copy tx-testing/testng_regression_master.xml tx-testing/testng.xml'            
+            }
+            
+
+
+          //  sh '''
+          //  sudo forever logs 0
+          //  cd tx-testing
+          //  chmod 755 ./driver/*
+          //  sudo pip install configobj
+          //  python -c "import configobj; conf=configobj.ConfigObj('configuration/config.properties'); conf.update(dict(os='linux',appurl='https://localhost')); conf.write()"
+          //  cat configuration/config.properties
+          bat '''
+          	cd tx-testing
+            mvn test
+            '''
+          } catch (error) {
+            office365ConnectorSend message: "tx-client build failed in selenium test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)
+            office365ConnectorSend message: "tx-client build failed in selenium test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+            throw error
+          }
+          finally {
+            //lets cleanup here
+            //sh 'sudo forever stopall'
+          }
+        }
+
+      }
+    }
+
+/*Cannot be done bcs of the special token we need
+    stage('pushToMaster') {
+      when {
+        expression {
+          //Update from master only for branches that start with ITXP
+          return env.GIT_BRANCH.startsWith("origin/ITXP")
+        }
+      }
+      
+      steps {
+        script {
+          try {
+            sh '''
+              cd ../
+              git checkout origin/master
+              if [ $? -ne 0 ]; then
+                exit $?
+              fi
+              git merge ${GIT_BRANCH}
+              git push origin master
+            '''
+          } catch (error) {
+            office365ConnectorSend message: "tx-client build failed to push change to ${GIT_BRANCH} from origin/master stage, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL()
+            throw error
+          }
+        }
+      }
+    }
+
+*/
+
+    stage('DeployUIToAWS') { 
+      when {
+	      environment name: 'GIT_BRANCH', value: 'origin/master'
+	  }
+      steps {
+        script {
+          try
+          {
+              //To enable passwordless ssh from the jenkins server to the aws server: 'sudo su -s /bin/bash jenkins' then 'ssh-keygen' and at the end 'ssh-copy-id pnplinuxadmin@${TARGET_SERVER}'
+	            //Lets first recycle the environment
+              sh '''
+                ssh pnplinuxadmin@${TARGET_SERVER}  'sudo /opt/apache-tomcat-8.5.30/bin/shutdown.sh'
+                if [ $? -ne 0 ]; then
+                  exit $?
+                fi
+                ssh pnplinuxadmin@${TARGET_SERVER}  'sudo systemctl restart redis'
+                if [ $? -ne 0 ]; then
+                  exit $?
+                fi
+                ssh pnplinuxadmin@${TARGET_SERVER}  'sudo systemctl restart mongod'
+                if [ $? -ne 0 ]; then
+                  exit $?
+                fi
+                ssh pnplinuxadmin@${TARGET_SERVER}  'sudo /opt/apache-tomcat-8.5.30/bin/startup.sh'
+                if [ $? -ne 0 ]; then
+                  exit $?
+                fi
+	            '''
+              //Now lets deploy the UI
+              sh '''
+                ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client;git -c http.sslVerify=false pull  https://03aeea4f167caadb131c13ae18825aa228fbc42c@github01.hclpnp.com/HIP/hip-client.git'
+                if [ $? -ne 0 ]; then
+                  exit $?
+                fi
+
+                ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client;npm install'
+                if [ $? -ne 0 ]; then
+                  exit $?
+                fi
+              '''
+
+              //Now lets restart the UI server
+              sh '''
+                ssh pnplinuxadmin@${TARGET_SERVER}  'pwd'
+                ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client;pwd ;sudo "./restartServer.sh"'
+              '''
+          }
+          catch(error)
+          {
+      		  office365ConnectorSend message: "hip-client build failed in Deploy to AWS stage for git branch ${GIT_BRANCH}, @Build", status:"FAILED", webhookUrl:this.&getOfficeURL(env.GIT_BRANCH)
+      		  office365ConnectorSend message: "hip-client build failed in Deploy to AWS stage for git branch ${GIT_BRANCH}, @Build", status:"FAILED", webhookUrl:this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+            throw error
+          }
+        }
+
+      }
+    }
+
+    stage('VerifyAWS') {
+     when {
+      environment name: 'GIT_BRANCH', value: 'impossible'
+      }
+      steps {
+        script {
+
+          try {
+            sh '''
+            ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client/tx-testing;chmod 755 ./driver/*'
+            ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client/tx-testing;sudo pip install configobj'
+            ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client/tx-testing;python -c "import configobj; conf=configobj.ConfigObj(\'configuration/config.properties\'); conf.update(dict(os=\'linux\',appurl=\'https://localhost\')); conf.write()"'
+            ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client/tx-testing;sudo cat configuration/config.properties'
+            ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client/tx-testing;rm -f testng.xml;cp testng_regression_master.xml testng.xml'            
+            ssh pnplinuxadmin@${TARGET_SERVER}  'cd hip-client/tx-testing;mvn test'
+            if [ $? -ne 0 ]; then
+              exit $?
+            fi
+            '''
+          } catch (error) {
+            office365ConnectorSend message: "hip-client build failed in selenium test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)
+            office365ConnectorSend message: "hip-client build failed in selenium test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+            throw error
+          }
+          finally {
+            //lets cleanup here
+            sh 'sudo forever stopall'
+          }
+        }
+
+      }
+
+    }
+
+    stage('UpdateRepository') {
+     when {
+      environment name: 'GIT_BRANCH', value: 'origin/master'
+      }
+      steps {
+        script {
+
+          try {
+            sh '''
+            cd ../
+            pwd
+            if [ -f ./hip-client-master.tar ]; then
+              rm ./hip-client-master.tar
+            fi
+            tar -cvf hip-client-master.tar hip-client-master
+            tar --delete -f hip-client-master.tar hip-client-master/.git
+            if [ -f ./hip-client-master.tar.gz ]; then
+              rm ./hip-client-master.tar.gz
+            fi
+            gzip hip-client-master.tar
+            sudo mv ./hip-client-master.tar.gz /repo
+
+            TIMESTAMP=`python -c 'import time;import datetime;currentTimeStamp = datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S").replace(":", "_").replace(" ", "_").replace("-", "_");print(currentTimeStamp)'`                          
+            yes|sudo cp -f /repo/hip-client-master.tar.gz  /repo/hip-client-master-build-${BUILD_NUMBER}-${TIMESTAMP}.tar.gz
+            if [ $? -ne 0 ]; then
+              exit $?
+            fi
+            sudo python -c "import configobj; conf=configobj.ConfigObj('/repo/hip-deploy.properties'); conf.update(dict(hip_client_master='/repo/hip-client-master-build-${BUILD_NUMBER}-${TIMESTAMP}.tar.gz')); conf.write()"
+            cat /repo/hip-deploy.properties
+            '''
+          } catch (error) {
+            office365ConnectorSend message: "tx-client build failed in selenium test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)
+            office365ConnectorSend message: "tx-client build failed in selenium test stage for git branch ${GIT_BRANCH}, @Build", status: "FAILED", webhookUrl: this.&getBuildErrorsOfficeURL(env.GIT_BRANCH)
+            throw error
+          }
+          finally {
+            //lets cleanup here
+            sh 'sudo forever stopall'
+          }
+        }
+
+      }
+
+    }
+
+    stage('Success') {
+      steps {
+        script { 
+            office365ConnectorSend message: "tx-client build completed for git branch ${GIT_BRANCH}, git changes: \n" + gitCommits, status: "SUCCESS", webhookUrl: this.&getOfficeURL(env.GIT_BRANCH)
+        }
+
+      }
+
+    }
+    
+  }
+
+  environment {
+    //AWS private
+    TARGET_SERVER=this.&getServerToDeploy()
+      //What is the testng file
+    TESTNGXML=this.&getTestng()
+    PATH='C:\\Users\\amitk\\Desktop\\TxServerSetup\\apache-maven-3.5.0-bin\\apache-maven-3.5.0\\bin;C:\\Program Files\\nodejs;C:\\Windows\\System32;c:\\program files\\git\\cmd;%PATH%';
+}
+
+  post {
+    always {
+      junit 'tx-testing/target/surefire-reports/*.xml'
+    }
+  }
+}
